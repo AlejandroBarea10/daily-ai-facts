@@ -38,6 +38,13 @@ export function getTodayUTC() {
   const utcMonth = now.getUTCMonth() + 1 // getUTCMonth returns 0-11
   const utcDay = now.getUTCDate()
 
+  if (process.env.NODE_ENV !== 'production') {
+    console.log('[Supabase] Current Date Info:')
+    console.log('  Local Date:', now.toLocaleString())
+    console.log('  UTC Date:', now.toUTCString())
+    console.log('  UTC Calculation:', { utcDay, utcMonth, utcYear })
+  }
+
   return { day: utcDay, month: utcMonth, year: utcYear }
 }
 
