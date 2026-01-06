@@ -1,0 +1,40 @@
+name: Daily Ephemeris Generation
+
+on:
+  schedule:
+    # Ejecuta cada día a las 00:00 UTC
+    - cron: '0 0 * * *'
+  # Permite ejecutar manualmente desde GitHub Actions
+  workflow_dispatch:
+
+jobs:
+  generate-ephemeris:
+    runs-on: ubuntu-latest
+    name: Generate Tomorrow's Ephemeris
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate ephemeris for tomorrow
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: node scripts/generate-ephemeris.js
+
+      - name: Log success
+        if: success()
+        run: echo "✅ Ephemeris generated successfully for tomorrow"
+
+      - name: Log failure
+        if: failure()
+        run: echo "❌ Failed to generate ephemeris. Check logs above."
