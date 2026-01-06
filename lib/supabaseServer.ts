@@ -50,57 +50,75 @@ export function getTodayUTC() {
 
 /**
  * Fetch ephemeris for today from Supabase
+ * If not found, fallback to the most recent ephemeris available
  */
 export async function getTodayEphemeris() {
   try {
     const { day, month, year } = getTodayUTC()
     
-    console.log('[Supabase] Querying ephemerides for:', { day, month, year })
+    console.log('[Supabase] Querying ephemerides for today:', { day, month, year })
 
-    const { data, error } = await supabase
+    // Query for today's ephemeris using maybeSingle() instead of single()
+    // maybeSingle() returns null if 0 rows, not an error
+    const { data: todayData, error: todayError } = await supabase
       .from('ephemerides')
       .select('*')
       .eq('day', day)
       .eq('month', month)
       .eq('year', year)
-      .single() // Expect only one result
+      .maybeSingle()
 
-    if (error) {
-      console.error('[Supabase] Query error object:', JSON.stringify(error, null, 2))
-      console.error('[Supabase] Error details:', {
-        code: error.code || '(no code)',
-        message: error.message || '(no message)',
-        status: (error as any).status || '(no status)',
-        hint: (error as any).hint || '(no hint)',
+    if (todayError) {
+      console.error('[Supabase] Error querying today:', {
+        code: todayError.code || '(no code)',
+        message: todayError.message || '(no message)',
       })
-      
-      if (error.code === 'PGRST116') {
-        // No row found - this is expected
-        console.log('[Supabase] No ephemeris found for this date (expected)')
-        return null
-      }
-      
-      // All other errors - return null and let frontend show "no data"
-      console.error('[Supabase] Returning null due to error')
-      return null
+      // Continue to fallback
     }
 
-    if (!data) {
-      console.log('[Supabase] Query successful but no data returned')
-      return null
+    if (todayData) {
+      console.log('[Supabase] Found ephemeris for today:', {
+        title: todayData.title,
+        date: `${todayData.day}/${todayData.month}/${todayData.year}`,
+      })
+      return todayData
     }
 
-    console.log('[Supabase] Query successful, data returned:', {
-      title: data.title,
-      date: `${data.day}/${data.month}`,
-    })
+    // Fallback: Get the most recent ephemeris available
+    console.log('[Supabase] No ephemeris found for today. Fetching most recent...')
     
-    return data
+    const { data: latestData, error: latestError } = await supabase
+      .from('ephemerides')
+      .select('*')
+      .order('year', { ascending: false })
+      .order('month', { ascending: false })
+      .order('day', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    if (latestError) {
+      console.error('[Supabase] Error fetching latest ephemeris:', {
+        code: latestError.code || '(no code)',
+        message: latestError.message || '(no message)',
+      })
+      return null
+    }
+
+    if (latestData) {
+      console.log('[Supabase] Returning most recent ephemeris:', {
+        title: latestData.title,
+        date: `${latestData.day}/${latestData.month}/${latestData.year}`,
+        note: 'This is not today\'s ephemeris, but the most recent available',
+      })
+      return latestData
+    }
+
+    console.log('[Supabase] No ephemeris data available in database')
+    return null
   } catch (error) {
     console.error('[Supabase] Fatal error during query:', {
       message: error instanceof Error ? error.message : String(error),
       name: error instanceof Error ? error.name : 'Unknown',
-      stack: error instanceof Error ? error.stack : undefined,
     })
     return null
   }
