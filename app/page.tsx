@@ -4,6 +4,7 @@ import TerminalFooter from "@/components/terminal-footer"
 import { getTodayEphemeris } from "@/lib/supabaseServer"
 
 export const runtime = "nodejs"
+export const dynamic = "force-dynamic"
 
 export default async function Home() {
   const ephemerisData = await getTodayEphemeris()
