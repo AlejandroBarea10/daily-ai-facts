@@ -116,23 +116,34 @@ async function ephemerisExists(day, month, year) {
  * Generar efeméride usando OpenAI
  */
 async function generateEphemerisWithAI(day, month, year, monthName) {
-  const prompt = `Generate a historical event or AI/tech milestone that occurred on ${monthName} ${day}, ${year}.
+  const currentYear = new Date().getUTCFullYear()
+  
+  const prompt = `Generate a HISTORICAL event (from a past year, NOT current year ${currentYear}) that occurred on ${monthName} ${day}.
+
+The event should be:
+- A real, verifiable historical event from technology, science, or computing
+- From a PAST year (before ${currentYear}). Important: NOT from year ${currentYear}.
+- Include the specific year it happened
+- Include who discovered/founded/created it (person or organization)
+- Include why it was important or its impact
 
 Respond in JSON format ONLY (no markdown, no explanation):
 {
-  "title": "Short title (5-10 words)",
-  "description": "1-2 sentences describing the event. Maximum 200 characters.",
+  "title": "Event Title (5-10 words, include the year)",
+  "description": "3-4 sentences with: (1) The event description, (2) Who was involved (person/organization), (3) Historical year (e.g., 'In 1997...'), (4) Why it mattered/impact. Maximum 300 characters.",
   "category": "TECH or AI or COMPUTING",
   "source_url": "A real, verifiable Wikipedia or historical URL for this event"
 }
 
 IMPORTANT:
-- The event MUST be real and verifiable.
-- The date MUST be exactly ${monthName} ${day}, ${year}.
-- description must be 1-2 sentences only.
+- The event MUST have occurred on ${monthName} ${day} of ANY PAST YEAR (not ${currentYear})
+- The event MUST be verifiable and historically accurate
+- The description MUST mention the year it happened
+- The description MUST mention the person(s) or organization involved
+- The description MUST explain why it was important
 - Return ONLY valid JSON, nothing else.`
 
-  console.log(`\n📝 Requesting AI to generate ephemeris for ${monthName} ${day}, ${year}...`)
+  console.log(`\n📝 Requesting AI to generate historical ephemeris for ${monthName} ${day}...`)
 
   const response = await openai.chat.completions.create({
     model: 'gpt-4o-mini',
@@ -185,10 +196,8 @@ function validateDateInContent(content, day, month, year, monthName) {
   // Buscar el mes (por nombre)
   const monthMatches = fullContent.toLowerCase().includes(monthName.toLowerCase())
 
-  // Buscar el año
-  const yearMatches = fullContent.includes(year.toString())
-
-  return dayMatches && monthMatches && yearMatches
+  // Solo requerimos día y mes. El año será histórico (no necesariamente el consultado)
+  return dayMatches && monthMatches
 }
 
 /**

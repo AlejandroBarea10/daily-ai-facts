@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import { formatDateLong } from "@/lib/formatDate"
 
 export interface Ephemeris {
   date?: string
@@ -72,8 +73,8 @@ export default function EphemerisDisplay({ data }: EphemerisDisplayProps) {
     )
   }
 
-  // Format date from day/month to readable format
-  const dateStr = data.date || `${data.month || '?'}/${data.day || '?'}`
+  // Format date from day/month to readable long format
+  const dateStr = data.day && data.month ? formatDateLong(data.day, data.month) : "Unknown Date"
 
   return (
     <main className="space-y-6">
@@ -90,9 +91,9 @@ export default function EphemerisDisplay({ data }: EphemerisDisplayProps) {
       {/* Year display */}
       <div className="text-3xl md:text-4xl font-bold text-primary/60 leading-none">{data.year}</div>
 
-      {/* Day display - more prominent */}
+      {/* Day display - more prominent with formatted date */}
       <div className="text-5xl md:text-7xl font-bold text-primary text-glow leading-none">
-        {dateStr.toUpperCase()}
+        {dateStr}
       </div>
 
       {/* Title */}
