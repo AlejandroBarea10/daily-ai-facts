@@ -68,6 +68,20 @@ function getTomorrowUTC() {
 }
 
 /**
+ * Obtener HOY en UTC
+ */
+function getTodayUTC() {
+  const now = new Date()
+
+  return {
+    day: now.getUTCDate(),
+    month: now.getUTCMonth() + 1,
+    year: now.getUTCFullYear(),
+    dateObj: now,
+  }
+}
+
+/**
  * Obtener el nombre del mes en inglés
  */
 function getMonthName(month) {
