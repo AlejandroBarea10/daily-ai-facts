@@ -1,14 +1,28 @@
 #!/usr/bin/env node
 
 /**
- * Script para generar automáticamente una efeméride para mañana (UTC)
+ * Script para generar automáticamente una efeméride
  * 
- * Requisitos:
+ * Por defecto: genera "mañana" en zona horaria Europe/Madrid (España)
+ * Con TARGET_DATE: genera la fecha específica (formato YYYY-MM-DD)
+ * 
+ * Requisitos de entorno:
  * - SUPABASE_URL
  * - SUPABASE_SERVICE_ROLE_KEY
  * - OPENAI_API_KEY
  * 
- * Uso: node scripts/generate-ephemeris.js
+ * Opcionales:
+ * - TARGET_DATE (formato YYYY-MM-DD, para backfill)
+ * 
+ * Uso: 
+ *   node scripts/generate-ephemeris.js                   # Mañana en Spain TZ
+ *   TARGET_DATE=2026-01-14 node scripts/generate-ephemeris.js  # Fecha específica
+ * 
+ * Características:
+ * - ✅ Calcula fechas en Europe/Madrid (maneja DST automáticamente)
+ * - ✅ Categorías inválidas se mapean automáticamente (MEDICAL → SCIENCE)
+ * - ✅ Upsert en Supabase (evita duplicados con constraint unique)
+ * - ✅ Idempotente (ejecutar dos veces = actualiza, no falla)
  */
 
 import dotenv from 'dotenv'
@@ -24,12 +38,18 @@ const envPath = join(__dirname, '..', '.env.local')
 dotenv.config({ path: envPath })
 
 // ============================================================================
+// ZONA HORARIA: Usar Europe/Madrid para calcular "mañana" correctamente
+// ============================================================================
+const TIMEZONE = 'Europe/Madrid'
+
+// ============================================================================
 // CONFIGURACIÓN
 // ============================================================================
 
 const supabaseUrl = process.env.SUPABASE_URL
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
 const openaiApiKey = process.env.OPENAI_API_KEY
+const targetDateInput = process.env.TARGET_DATE // Format: YYYY-MM-DD
 
 // Validar variables de entorno
 if (!supabaseUrl || !supabaseServiceKey || !openaiApiKey) {
@@ -38,7 +58,25 @@ if (!supabaseUrl || !supabaseServiceKey || !openaiApiKey) {
   console.error('  - SUPABASE_URL')
   console.error('  - SUPABASE_SERVICE_ROLE_KEY')
   console.error('  - OPENAI_API_KEY')
+  console.error('')
+  console.error('Opcionales:')
+  console.error('  - TARGET_DATE (formato YYYY-MM-DD, por defecto "mañana" en Europe/Madrid)')
   process.exit(1)
+}
+
+// ============================================================================
+// CATEGORÍAS SOPORTADAS Y MAPEO
+// ============================================================================
+
+const VALID_CATEGORIES = ['AI', 'TECH', 'COMPUTING', 'SCIENCE']
+const CATEGORY_MAPPING = {
+  'MEDICAL': 'SCIENCE',
+  'MEDICINE': 'SCIENCE',
+  'HEALTH': 'SCIENCE',
+  'BIOLOGY': 'SCIENCE',
+  'PHYSICS': 'SCIENCE',
+  'CHEMISTRY': 'SCIENCE',
+  'MATHEMATICS': 'SCIENCE',
 }
 
 // ============================================================================
@@ -53,22 +91,56 @@ const openai = new OpenAI({ apiKey: openaiApiKey })
 // ============================================================================
 
 /**
- * Obtener mañana en UTC
+ * Obtener fecha en zona horaria Europe/Madrid
+ * Retorna day, month, year para la fecha especificada (o hoy si no se especifica)
  */
-function getTomorrowUTC() {
-  const now = new Date()
-  const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000)
-
-  return {
-    day: tomorrow.getUTCDate(),
-    month: tomorrow.getUTCMonth() + 1,
-    year: tomorrow.getUTCFullYear(),
-    dateObj: tomorrow,
+function getDateInMadridTimezone(dateString = null) {
+  let date
+  if (dateString) {
+    // Parsear YYYY-MM-DD como local (no UTC)
+    date = new Date(dateString + 'T00:00:00')
+  } else {
+    date = new Date()
   }
+
+  // Convertir a zona horaria Europe/Madrid
+  const formatter = new Intl.DateTimeFormat('es-ES', {
+    timeZone: TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  })
+  
+  const parts = formatter.formatToParts(date)
+  const year = parseInt(parts.find(p => p.type === 'year').value)
+  const month = parseInt(parts.find(p => p.type === 'month').value)
+  const day = parseInt(parts.find(p => p.type === 'day').value)
+
+  return { day, month, year, dateObj: date }
 }
 
 /**
- * Obtener HOY en UTC
+ * Obtener "mañana" en zona horaria Europe/Madrid
+ * Si TARGET_DATE está definido, parsear esa fecha.
+ * Si no, calcular "mañana" desde hoy en Europe/Madrid.
+ */
+function getTomorrowMadridTimezone() {
+  if (targetDateInput) {
+    // Usar la fecha especificada
+    console.log(`📍 Using TARGET_DATE from environment: ${targetDateInput}`)
+    return getDateInMadridTimezone(targetDateInput)
+  }
+
+  // Calcular "mañana" en Europe/Madrid
+  const todayInMadrid = getDateInMadridTimezone()
+  const tomorrow = new Date(todayInMadrid.dateObj)
+  tomorrow.setDate(tomorrow.getDate() + 1)
+
+  return getDateInMadridTimezone(tomorrow.toISOString().split('T')[0])
+}
+
+/**
+ * Obtener HOY en UTC (para mantener compatibilidad con getTodayEphemeris)
  */
 function getTodayUTC() {
   const now = new Date()
@@ -131,6 +203,7 @@ async function ephemerisExists(day, month, year) {
  */
 async function generateEphemerisWithAI(day, month, year, monthName) {
   const currentYear = new Date().getUTCFullYear()
+  const validCategoriesStr = VALID_CATEGORIES.join(', ')
   
   const prompt = `Generate a HISTORICAL event (from a past year, NOT current year ${currentYear}) that occurred on ${monthName} ${day}.
 
@@ -141,20 +214,23 @@ The event should be:
 - Include who discovered/founded/created it (person or organization)
 - Include why it was important or its impact
 
+IMPORTANT - Category MUST be ONE OF: ${validCategoriesStr}
+
 Respond in JSON format ONLY (no markdown, no explanation):
 {
   "title": "Event Title (5-10 words, include the year)",
   "description": "3-4 sentences with: (1) The event description, (2) Who was involved (person/organization), (3) Historical year (e.g., 'In 1997...'), (4) Why it mattered/impact. Maximum 300 characters.",
-  "category": "TECH or AI or COMPUTING",
+  "category": "TECH",
   "source_url": "A real, verifiable Wikipedia or historical URL for this event"
 }
 
-IMPORTANT:
+Requirements:
 - The event MUST have occurred on ${monthName} ${day} of ANY PAST YEAR (not ${currentYear})
 - The event MUST be verifiable and historically accurate
 - The description MUST mention the year it happened
 - The description MUST mention the person(s) or organization involved
 - The description MUST explain why it was important
+- The category MUST be one of: ${validCategoriesStr}
 - Return ONLY valid JSON, nothing else.`
 
   console.log(`\n📝 Requesting AI to generate historical ephemeris for ${monthName} ${day}...`)
@@ -180,15 +256,15 @@ IMPORTANT:
     throw new Error(`Failed to parse AI response: ${content}`)
   }
 
-  // Validar estructura
+  // Validar estructura básica
   if (!ephemeris.title || !ephemeris.description || !ephemeris.category) {
     throw new Error(`Invalid ephemeris structure: ${JSON.stringify(ephemeris)}`)
   }
 
-  // Validar categoría
-  if (!['AI', 'TECH', 'COMPUTING'].includes(ephemeris.category)) {
-    throw new Error(`Invalid category: ${ephemeris.category}`)
-  }
+  // NUEVA LÓGICA: Normalizar y validar categoría con fallback seguro
+  // No hace throw, solo log warning
+  const normalizedCategory = normalizeCategoryWithFallback(ephemeris.category)
+  ephemeris.category = normalizedCategory
 
   // Validar URL
   if (!ephemeris.source_url || !ephemeris.source_url.startsWith('http')) {
@@ -215,24 +291,58 @@ function validateDateInContent(content, day, month, year, monthName) {
 }
 
 /**
- * Insertar efeméride en Supabase
+ * Normalizar y validar categoría con fallback seguro
+ * - Trim y uppercase
+ * - Mapear categorías conocidas no soportadas a equivalentes
+ * - Fallback a SCIENCE si es totalmente inválida
+ * - Log warnings pero NO throw
  */
-async function insertEphemeris(day, month, year, data) {
-  const { error } = await supabase.from('ephemerides').insert([
+function normalizeCategoryWithFallback(category) {
+  const normalized = category.trim().toUpperCase()
+
+  // Si ya es válida
+  if (VALID_CATEGORIES.includes(normalized)) {
+    return normalized
+  }
+
+  // Intentar mapeo semántico
+  if (CATEGORY_MAPPING[normalized]) {
+    const mapped = CATEGORY_MAPPING[normalized]
+    console.warn(`⚠️  Category "${category}" not in whitelist, mapped to "${mapped}"`)
+    return mapped
+  }
+
+  // Fallback final a SCIENCE
+  console.warn(`⚠️  Category "${category}" not recognized, falling back to "SCIENCE"`)
+  return 'SCIENCE'
+}
+
+/**
+ * Insertar o actualizar efeméride en Supabase (upsert)
+ * Si ya existe para esa fecha, actualizar; si no, insertar.
+ */
+async function insertOrUpdateEphemeris(day, month, year, data) {
+  // Intentar upsert usando on_conflict
+  const { error } = await supabase.from('ephemerides').upsert(
+    [
+      {
+        day,
+        month,
+        year,
+        title: data.title,
+        description: data.description,
+        category: data.category,
+        display_date: `${getMonthName(month)} ${day}`,
+        source_url: data.source_url,
+      },
+    ],
     {
-      day,
-      month,
-      year,
-      title: data.title,
-      description: data.description,
-      category: data.category,
-      display_date: `${getMonthName(month)} ${day}`,
-      source_url: data.source_url,
-    },
-  ])
+      onConflict: 'day,month,year', // Unique constraint columns
+    }
+  )
 
   if (error) {
-    throw new Error(`Failed to insert ephemeris: ${error.message}`)
+    throw new Error(`Failed to insert/update ephemeris: ${error.message}`)
   }
 }
 
@@ -244,10 +354,15 @@ async function main() {
   try {
     console.log('🚀 Starting ephemeris generation...\n')
 
-    // 1. Calcular mañana
-    const { day, month, year, dateObj } = getTomorrowUTC()
+    // 1. Calcular la fecha objetivo (mañana en Spain tz, o TARGET_DATE si se proporciona)
+    const { day, month, year, dateObj } = getTomorrowMadridTimezone()
     const monthName = getMonthName(month)
     console.log(`📅 Target date: ${monthName} ${day}, ${year}`)
+    if (targetDateInput) {
+      console.log(`   (using TARGET_DATE environment variable)`)
+    } else {
+      console.log(`   (calculated as tomorrow in Europe/Madrid timezone)`)
+    }
 
     // 2. Verificar que no existe
     console.log('🔍 Checking if ephemeris already exists...')
@@ -281,11 +396,11 @@ async function main() {
 
     console.log(`✓ Date validation passed!`)
 
-    // 5. Insertar
-    console.log(`\n💾 Inserting into Supabase...`)
-    await insertEphemeris(day, month, year, generatedEphemeris)
+    // 5. Insertar o actualizar
+    console.log(`\n💾 Inserting/updating in Supabase...`)
+    await insertOrUpdateEphemeris(day, month, year, generatedEphemeris)
 
-    console.log(`✅ SUCCESS! Ephemeris for ${monthName} ${day}, ${year} has been created:`)
+    console.log(`✅ SUCCESS! Ephemeris for ${monthName} ${day}, ${year} has been created/updated:`)
     console.log(`   Title: ${generatedEphemeris.title}`)
     console.log(`   Category: ${generatedEphemeris.category}`)
     console.log(`   Source: ${generatedEphemeris.source_url}`)
