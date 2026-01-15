@@ -26,9 +26,11 @@ async function main() {
 
     const { data, error } = await supabase
       .from('ephemerides')
-      .select('day, month, year, title, category')
+      .select('day, month, year, title, category, id, created_at')
       .eq('year', 2026)
       .eq('month', 1)
+      .order('year', { ascending: true })
+      .order('month', { ascending: true })
       .order('day', { ascending: true })
 
     if (error) {
